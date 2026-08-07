@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TwistPrint XML a Facturación</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .drag-over { border-color: #3b82f6; background-color: #eff6ff; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800">
+    <div class="max-w-5xl mx-auto py-10 px-6">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-slate-900">Cotizador Avanzado desde XML</h1>
+            <p class="text-slate-500 mt-2">Carga un archivo XML exportado desde TwistPrint para generar el detalle exacto de facturación.</p>
+        </header>
+        <div id="dropzone" class="border-2 border-dashed border-slate-300 rounded-xl p-10 text-center transition-colors mb-8 bg-white shadow-sm cursor-pointer hover:bg-slate-50">
+            <svg class="mx-auto h-12 w-12 text-slate-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <p class="text-lg text-slate-600 font-medium">Arrastra y suelta tu archivo XML aquí</p>
+            <p class="text-sm text-slate-400 mt-1">o haz clic para seleccionar</p>
+            <input type="file" id="fileInput" accept=".xml" class="hidden">
+        </div>
+        <div id="results-container" class="hidden">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Detalle Generado</h2>
+                <button id="copyBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    Copiar Texto
+                </button>
+            </div>
+            <div class="bg-gray-900 rounded-xl p-6 shadow-lg overflow-x-auto">
+                <pre id="output" class="text-green-400 font-mono text-sm leading-relaxed whitespace-pre"></pre>
+            </div>
+        </div>
+    </div>
+    <script src="data.js"></script>
+    <script>
+        // =====================================================================
+        // CONSTANTES DE PRECIO (extraídas de app.js — AUTORITATIVAS)
+        // =====================================================================
+        const PRECIO_PLANCHA = { SM74: 5800, SM102: 8800 };
+        const PRECIO_RESMA = 1300;
+        const PRECIO_TERMOLAMINADO_M2 = 200;
+        const PRECIO_PERFORACION_HOJA = 1.2;
+        const PRECIO_FAJADO = 70;
+        const PRECIO_EMPAQUE_CAJA = 1300;
+        const PRECIO_CORTE_FINAL_LIBROS = 100;
+        const PRECIO_DIGITAL_RICOH = 100;
+
+        const TARIFA_ANILLADO = {
+            dura: { label: "Cuaderno tapa dura", precio: 156 },
+            blanda: { label: "Cuaderno tapa blanda", precio: 131 },
+            calendario: { label: "Calendario de escritorio", precio: 113 }
+        };
+        const EXTRA_MM_TAPA_DURA = 5;
+
+        const ANILLOS = [
+            { codigo: "Anillo10", label: '1/4" (6,9 mm)', paso: 3, costo: 1.0185, capacidadMm: 6.9, hojasMax: 45 },
+            { codigo: "Anillo09", label: '5/16" (8,0 mm)', paso: 3, costo: 1.7955, capacidadMm: 8.0, hojasMax: 60 },
+            { codigo: "Anillo08", label: '3/8" (9,5 mm)', paso: 3, costo: 1.68, capacidadMm: 9.5, hojasMax: 80 },
+            { codigo: "Anillo07", label: '7/16" (11,0 mm)', paso: 3, costo: 1.8375, capacidadMm: 11.0, hojasMax: 100 },
+            { codigo: "Anillo06", label: '1/2" (12,7 mm)', paso: 3, costo: 2.7195, capacidadMm: 12.7, hojasMax: 120 },
+            { codigo: "Anillo05", label: '9/16" (14,3 mm)', paso: 3, costo: 3.381, capacidadMm: 14.3, hojasMax: 140 },
+            { codigo: "Anillo04", label: '5/8" (16,0 mm)', paso: 2, costo: 5.6805, capacidadMm: 16.0, hojasMax: 160 },
+            { codigo: "Anillo03", label: '3/4" (19,0 mm)', paso: 2, costo: 8.0325, capacidadMm: 19.0, hojasMax: 190 },
+            { codigo: "Anillo02", label: '1" (25,4 mm)', paso: 2, costo: 12.768, capacidadMm: 25.4, hojasMax: 250 },
+            { codigo: "Anillo01", label: '1 1/4" (32,0 mm)', paso: 2, costo: 26.754, capacidadMm: 32.0, hojasMax: 310 }
+        ];
+
+        const MINIMUMS = { termolaminado: 20000, anillado: 30000, doblado: 25000, alzado: 25000 };
+
+        // =====================================================================
+        // FUNCIONES DE LOOKUP
+        // =====================================================================
+        function contarAnillos(ladoCm, paso) {
+            return Math.ceil((ladoCm / 2.54) * paso) + 1;
+        }
+
+        function formatCLP(val) {
+            return "$" + Math.round(val).toLocaleString("es-CL");
+        }
+
+        function lookupGenerico(maquina, servicio, dim1, dim2, cantidad) {
+            var rows = EMBEDDED_PRICE_DATA.filter(function(r) {
+                return r.maquina === maquina && r.servicio === servicio;
+            });
+            var matchRows = rows.filter(function(r) {
+                if (dim2 === null || dim2 === undefined) return r.dim1 == dim1;
+                return r.dim1 == dim1 && r.dim2 == dim2;
+            });
+            // Espejo: si no hay 4/1, buscar 1/4
+            if (matchRows.length === 0 && dim2 !== null && dim2 !== undefined) {
+                matchRows = rows.filter(function(r) { return r.dim1 == dim2 && r.dim2 == dim1; });
+            }
+            if (matchRows.length === 0) return { precio: 0, extrapolated: false };
+            matchRows.sort(function(a, b) { return a.tiraje - b.tiraje; });
+
+            for (var i = 0; i < matchRows.length; i++) {
+                if (matchRows[i].tiraje >= cantidad) return { precio: matchRows[i].precio, extrapolated: false };
+            }
+            // Extrapolación
+            var r29 = matchRows.find(function(r) { return r.tiraje === 29000; });
+            var r30 = matchRows.find(function(r) { return r.tiraje === 30000; });
+            if (r29 && r30 && cantidad > 30000) {
+                var incPerMil = r30.precio - r29.precio;
+                var ext = r30.precio + ((cantidad - 30000) / 1000) * incPerMil;
+                return { precio: ext, extrapolated: true };
+            }
+            return { precio: matchRows[matchRows.length - 1].precio, extrapolated: false };
+        }
+
+        // =====================================================================
+        // UI: Drag & Drop + File Input
+        // =====================================================================
+        var dropzone = document.getElementById('dropzone');
+        var fileInput = document.getElementById('fileInput');
+
+        window.addEventListener('dragover', function(e) { e.preventDefault(); dropzone.classList.add('drag-over'); });
+        window.addEventListener('drop', function(e) {
+            e.preventDefault(); dropzone.classList.remove('drag-over');
+            if (e.dataTransfer.files.length) processFile(e.dataTransfer.files[0]);
+        });
+        dropzone.addEventListener('click', function() { fileInput.click(); });
+        dropzone.addEventListener('dragleave', function() { dropzone.classList.remove('drag-over'); });
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files.length) processFile(e.target.files[0]);
+        });
+
+        document.getElementById('copyBtn').addEventListener('click', function() {
+            var text = document.getElementById('output').innerText;
+            navigator.clipboard.writeText(text).then(function() {
+                var btn = document.getElementById('copyBtn');
+                btn.innerHTML = "¡Copiado!";
+                btn.classList.replace('bg-blue-600', 'bg-green-600');
+                setTimeout(function() {
+                    btn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg> Copiar Texto';
+                    btn.classList.replace('bg-green-600', 'bg-blue-600');
+                }, 2000);
+            });
+        });
+
+        function processFile(file) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    var parser = new DOMParser();
+                    var xmlDoc = parser.parseFromString(e.target.result, "text/xml");
+                    generarCotizacion(xmlDoc);
+                } catch (error) {
+                    alert("Error al procesar el XML: " + error.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function getText(node, tag) {
+            if (!node) return "";
+            var parts = tag.split(' > ');
+            var current = node;
+            for (var i = 0; i < parts.length; i++) {
+                var el = current.querySelector(parts[i].trim());
+                if (!el) return "";
+                current = el;
+            }
+            return current.textContent ? current.textContent.trim() : "";
+        }
+
+        // =====================================================================
+        // MOTOR PRINCIPAL DE COTIZACIÓN
+        // =====================================================================
+                function generarCotizacion(xml) {
+            var piezasOutput = [];
+            var generalesOutput = [];
+            var manuales = [];
+            var totalNeto = 0;
+
+            var ot = getText(xml, "ot");
+            var nombreProyecto = getText(xml, "nombre");
+            var cantidadTotal = parseInt(getText(xml, "cantidad") || "0");
+            var descripcion = getText(xml, "descripcion") || "";
+
+            var piezas = xml.querySelectorAll("piezas > pieza");
+            var totalPosturasAlzado = 0;
+            var totalHojasPorUnidad = 0;
+            var ladoCmMasLargo = 0;
+
+            piezas.forEach(function(pieza, index) {
+                var numPieza = index + 1;
+                var nombre = getText(pieza, "nombre");
+                var cotizadoComo = getText(pieza, "cotizado_como");
+                var paginas = parseInt(getText(pieza, "num_paginas") || "1");
+                var montaje = getText(pieza, "montaje") || "";
+
+                var lineasPieza = [];
+                var subtotalPieza = 0;
+                function addLinea(texto, precio) {
+                    lineasPieza.push({ texto: texto, precio: precio });
+                    subtotalPieza += precio;
+                    totalNeto += precio;
+                }
+
+                var colTiro = parseInt(getText(pieza, "colores_tiro") || "0");
+                var colRetiro = parseInt(getText(pieza, "colores_retiro") || "0");
+                var numPlanchas = parseInt(getText(pieza, "planchas") || "0");
+                var totalColores = colTiro + colRetiro;
+                var posturas = 1;
+                if (totalColores > 0 && numPlanchas > 0) {
+                    posturas = numPlanchas / totalColores; // DEBE SER DECIMAL PARA DETECTAR MEDIAS POSTURAS
+                } else if (cotizadoComo === "Páginas" || cotizadoComo === "Hojas Iguales") {
+                    var maqNombre = getText(pieza, "maquina > nombre");
+                    if (montaje.includes("4x2N") || maqNombre.includes("102")) {
+                        posturas = paginas / 16;
+                    } else {
+                        posturas = paginas / 8;
+                    }
+                }
+
+                totalPosturasAlzado += posturas;
+                if (cotizadoComo !== "Tapas") totalHojasPorUnidad += (paginas / 2);
+
+                var formatoAltoMm = parseFloat(getText(pieza, "formato_alto") || getText(pieza, "alto") || "0");
+                var formatoAnchoMm = parseFloat(getText(pieza, "formato_ancho") || getText(pieza, "ancho") || "0");
+                if (formatoAltoMm === 0) {
+                    var fmtMatch = (getText(pieza, "formato") || descripcion).match(/(\d+(?:[.,]\d+)?)\s*[xX]\s*(\d+(?:[.,]\d+)?)/);
+                    if (fmtMatch) {
+                        formatoAnchoMm = parseFloat(fmtMatch[1].replace(",", "."));
+                        formatoAltoMm = parseFloat(fmtMatch[2].replace(",", "."));
+                    }
+                }
+                var ladoMayor = Math.max(formatoAltoMm, formatoAnchoMm);
+                if (ladoMayor > ladoCmMasLargo) ladoCmMasLargo = ladoMayor;
+
+                var maquina = getText(pieza, "maquina > nombre");
+                var tiros = parseInt(getText(pieza, "tiros") || "0");
+                var sobrante = parseInt(getText(pieza, "sobrante") || "0");
+                var pliegosBrutos = parseInt(getText(pieza, "pliegos") || "0");
+
+                // CORTE DE RESMAS INICIAL (Antes de impresión)
+                var servicios = pieza.querySelectorAll("servicios > servicio");
+                var tieneCorteResmas = false;
+                servicios.forEach(function(srv) {
+                    var sNombre = getText(srv, "nombre");
+                    var sTipo = getText(srv, "tipo");
+                    if (sTipo === "Corte" && (sNombre.includes("Inicial") || sNombre.includes("Intermedio"))) {
+                        tieneCorteResmas = true;
+                    }
+                });
+                if (tieneCorteResmas) {
+                    var resmas = Math.ceil(pliegosBrutos / 500);
+                    if (resmas < 1) resmas = 1;
+                    var costoRes = resmas * PRECIO_RESMA;
+                    addLinea(resmas + " resmas \u2014 Corte de resmas", costoRes);
+                }
+
+                var maqConfig = null;
+                if (maquina.includes("SM74") || maquina.includes("SM 74")) maqConfig = "SM74";
+                if (maquina.includes("SM102") || maquina.includes("SM 102")) maqConfig = "SM102";
+
+                var tirajeNeto = tiros - sobrante;
+                var tirajeCobro = cantidadTotal;
+                if (posturas <= 1 && tirajeNeto > cantidadTotal) {
+                    tirajeCobro = tirajeNeto;
+                }
+                var tirajeRedondeado = Math.ceil(tirajeCobro / 1000) * 1000;
+                if (tirajeRedondeado < 1000) tirajeRedondeado = 1000;
+
+                if (maqConfig) {
+                    var posturasEnteras = Math.floor(posturas);
+                    var posturasMedias = (posturas - posturasEnteras > 0) ? 1 : 0;
+                    
+                    var costoTotalImpresion = 0;
+                    var detalleLineas = [];
+
+                    if (posturasEnteras > 0) {
+                        var lk = lookupGenerico(maqConfig, "Impresion", colTiro, colRetiro, tirajeRedondeado);
+                        if (lk.precio > 0) {
+                            var planchasEnteras = (posturasEnteras * totalColores);
+                            var costoPlanchasEnteras = planchasEnteras * (maqConfig === "SM74" ? PRECIO_PLANCHA.SM74 : PRECIO_PLANCHA.SM102);
+                            var totalLinea = (lk.precio * posturasEnteras) + costoPlanchasEnteras;
+                            var extMark = lk.extrapolated ? " [EXTRAPOLADO]" : "";
+                            var prefix = (posturasEnteras === 1 && posturasMedias === 0) ? "" : posturasEnteras + " \u00D7 ";
+                            var planchasTxt = (posturasEnteras === 1 && posturasMedias === 0) ? planchasEnteras : posturasEnteras + " \u00D7 " + totalColores + " = " + planchasEnteras;
+                            var txt = prefix + tirajeCobro + " tiros \u2014 Impresi\u00F3n " + maqConfig + " (" + colTiro + "/" + colRetiro + ") \u00B7 " + planchasTxt + " planchas CTP " + maqConfig + extMark;
+                            addLinea(txt, totalLinea);
+                        }
+                    }
+
+                    if (posturasMedias > 0) {
+                        // Media postura (tiro y retiro en sí) usa la mitad del tiraje
+                        var tirajeMedioCobro = Math.ceil(tirajeCobro / 2);
+                        var tirajeMedioRedondeado = Math.ceil(tirajeMedioCobro / 1000) * 1000;
+                        if (tirajeMedioRedondeado < 1000) tirajeMedioRedondeado = 1000;
+
+                        var lkMedia = lookupGenerico(maqConfig, "Impresion", colTiro, colRetiro, tirajeMedioRedondeado);
+                        if (lkMedia.precio > 0) {
+                            var planchasMedia = numPlanchas - (posturasEnteras * totalColores);
+                            var costoPlanchasMedia = planchasMedia * (maqConfig === "SM74" ? PRECIO_PLANCHA.SM74 : PRECIO_PLANCHA.SM102);
+                            var totalLineaMedia = lkMedia.precio + costoPlanchasMedia;
+                            var minVentaTxt = (tirajeMedioCobro < 1000 && tirajeMedioRedondeado === 1000) ? " (m\u00EDnimo de venta: 1.000 tiros)" : "";
+                            var extMarkMedia = lkMedia.extrapolated ? " [EXTRAPOLADO]" : "";
+                            var txtMedia = tirajeMedioCobro + " tiros \u2014 Impresi\u00F3n " + maqConfig + " (" + colTiro + "/" + colRetiro + ")" + minVentaTxt + " \u00B7 " + planchasMedia + " planchas CTP " + maqConfig + " (tiro y retiro en s\u00ED)" + extMarkMedia;
+                            addLinea(txtMedia, totalLineaMedia);
+                        }
+                    }
+                } else if (maquina.toLowerCase().includes("ricoh") || maquina.toLowerCase().includes("konica") || maquina.toLowerCase().includes("digital")) {
+                    var cantDigital = tiros + sobrante;
+                    var totDigital = cantDigital * PRECIO_DIGITAL_RICOH;
+                    addLinea(cantDigital + " pliegos — Impresión Digital", totDigital);
+                }
+
+                // ENCONTRAR MAXIMO DOBLADO
+                var maxDobleces = 0;
+                var maxDoblecesTipo = "Lineal";
+                var tieneDoblado = false;
+
+                servicios.forEach(function(srv) {
+                    var sNombre = getText(srv, "nombre");
+                    if (sNombre.includes("Dobles pliegos")) {
+                        tieneDoblado = true;
+                        var pagsMatch = sNombre.match(/(\d+)\s*Pag/i);
+                        var pags = pagsMatch ? parseInt(pagsMatch[1]) : 8;
+                        var d = 1;
+                        var t = "Lineal";
+                        if (pags === 4) { d = 1; t = "Lineal"; }
+                        else if (pags === 8) { d = 2; t = "Lineal"; }
+                        else if (pags >= 16) { d = 4; t = "Compuesta"; }
+
+                        if (d > maxDobleces) {
+                            maxDobleces = d;
+                            maxDoblecesTipo = t;
+                        }
+                    }
+                });
+
+                if (tieneDoblado) {
+                    var totalPliegosImpresos = tiros + sobrante;
+                    var tirajeDoblado = Math.ceil(totalPliegosImpresos / 1000) * 1000;
+                    if (tirajeDoblado < 1000) tirajeDoblado = 1000;
+                    
+                    var lkDob = lookupGenerico("Dobladora Stahl", "Doblado", maxDobleces, maxDoblecesTipo, tirajeDoblado);
+                    var totalDob = lkDob.precio;
+                    if (totalDob < MINIMUMS.doblado) totalDob = MINIMUMS.doblado;
+                    if (totalDob > 0) {
+                        var extDob = lkDob.extrapolated ? " [EXT]" : "";
+                        addLinea(totalPliegosImpresos + " unidades × " + maxDobleces + " dobleces \u2014 Doblado (" + maxDoblecesTipo + ")" + extDob, totalDob);
+                    }
+                }
+
+                // ENCONTRAR ALZADO
+                var tieneAlzado = false;
+                servicios.forEach(function(srv) {
+                    var sNombre = getText(srv, "nombre");
+                    if (sNombre.includes("Alzado")) tieneAlzado = true;
+                });
+
+                if (tieneAlzado) {
+                    var totalPliegosImpresos = tiros + sobrante;
+                    var tirajeAlzCobro = Math.ceil(totalPliegosImpresos / 2);
+                    var tirajeAlzRedondeado = Math.ceil(tirajeAlzCobro / 1000) * 1000;
+                    if (tirajeAlzRedondeado < 1000) tirajeAlzRedondeado = 1000;
+                    
+                    var piezasAlzado = 2; // Por convención manual
+                    
+                    var lkAlz = lookupGenerico("Meson (Alzado/Intercalado)", "Alzado", piezasAlzado, null, tirajeAlzRedondeado);
+                    var pAlzado = lkAlz.precio;
+                    if (pAlzado < MINIMUMS.alzado) pAlzado = MINIMUMS.alzado;
+                    if (pAlzado > 0) {
+                        var extAlz = lkAlz.extrapolated ? " [EXTRAPOLADO]" : "";
+                        var minMsg = (tirajeAlzCobro < 1000 && tirajeAlzRedondeado === 1000) ? " (se aplic\u00F3 el m\u00EDnimo de venta)" : "";
+                        addLinea(tirajeAlzCobro + " unidades (" + tirajeAlzCobro + " \u00D7 1 \u00EDtems) \u00B7 " + piezasAlzado + " piezas \u2014 Alzado" + minMsg + extAlz, pAlzado);
+                    }
+                }
+
+                servicios.forEach(function(srv) {
+                    var sNombre = getText(srv, "nombre");
+                    var sTipo = getText(srv, "tipo");
+                    var sCant = parseFloat(getText(srv, "cantidad") || "1");
+
+                    if (sTipo === "Laminado" || sNombre.includes("Laminado") || sNombre.includes("laminado")) {
+                        var altoCorteMm = parseFloat(getText(pieza, "corte > dim_1") || "0");
+                        var anchoCorteMm = parseFloat(getText(pieza, "corte > dim_2") || "0");
+                        if (altoCorteMm === 0 || anchoCorteMm === 0) {
+                            var corteEl = pieza.querySelector("corte");
+                            if (corteEl) {
+                                altoCorteMm = parseFloat(getText(corteEl, "alto") || getText(corteEl, "dim_1") || "0");
+                                anchoCorteMm = parseFloat(getText(corteEl, "ancho") || getText(corteEl, "dim_2") || "0");
+                            }
+                        }
+                        var m2Pliego = (altoCorteMm / 1000) * (anchoCorteMm / 1000);
+                        var lados = (sCant >= 2) ? 2 : 1;
+                        var pliegosLaminado = tiros + sobrante;
+                        var totalM2 = m2Pliego * lados * pliegosLaminado;
+                        var pTermo = totalM2 * PRECIO_TERMOLAMINADO_M2;
+                        if (pTermo < MINIMUMS.termolaminado) pTermo = MINIMUMS.termolaminado;
+                        addLinea(totalM2.toFixed(2) + " m² — Termolaminado", pTermo);
+                    }
+                });
+                
+                if (lineasPieza.length > 0) {
+                    piezasOutput.push({ nombre: nombre, lineas: lineasPieza, subtotal: subtotalPieza });
+                }
+            });
+
+            function addGeneral(texto, precio) {
+                generalesOutput.push({ texto: texto, precio: precio });
+                totalNeto += precio;
+            }
+
+                // ALZADO FUE MOVIDO DENTRO DE CADA PIEZA
+
+            // SERVICIOS GENERALES
+            var srvGen = xml.querySelectorAll("servicios_generales > servicio");
+            var ladoCmAnillado = ladoCmMasLargo / 10;
+            if (ladoCmAnillado < 10) ladoCmAnillado = 27.5;
+
+            srvGen.forEach(function(srv) {
+                var nombre = getText(srv, "nombre");
+                var tipo = getText(srv, "tipo");
+
+                if (tipo === "Fajado" || nombre.includes("Fajado")) {
+                    var cantFajados = Math.ceil(cantidadTotal / 5);
+                    var totFaj = cantFajados * PRECIO_FAJADO;
+                    addGeneral(cantFajados + " × 5 unidades — Fajado", totFaj);
+                }
+
+                if (nombre.includes("Empaquetado")) {
+                    var cajas = Math.ceil(cantidadTotal / 25);
+                    var totCaja = cajas * PRECIO_EMPAQUE_CAJA;
+                    addGeneral(cajas + " cajas — Empaquetado", totCaja);
+                }
+
+                if (nombre.includes("Corte") && nombre.includes("Final") && nombre.includes("Libros")) {
+                    var cantCorteFinal = cantidadTotal + 50;
+                    var totCF = cantCorteFinal * PRECIO_CORTE_FINAL_LIBROS;
+                    addGeneral(cantCorteFinal + " unidades — Corte final libros", totCF);
+                }
+
+                if (tipo === "Anillado cuaderno" || nombre.includes("Anillado")) {
+                    var anilloMatch = nombre.match(/Anillo\d{2}/);
+                    var anilloKey = anilloMatch ? anilloMatch[0] : "Anillo02";
+                    var anilloData = ANILLOS.find(function(a) { return a.codigo === anilloKey; }) || ANILLOS[8];
+
+                    var tarifaFija = TARIFA_ANILLADO.blanda.precio;
+                    if (nombre.toLowerCase().includes("dura")) tarifaFija = TARIFA_ANILLADO.dura.precio;
+                    if (nombre.toLowerCase().includes("calendario")) tarifaFija = TARIFA_ANILLADO.calendario.precio;
+
+                    var anillosPorUnidad = contarAnillos(ladoCmAnillado, anilloData.paso);
+                    var costoAnillos = anillosPorUnidad * anilloData.costo;
+                    var costoPerforacion = totalHojasPorUnidad * PRECIO_PERFORACION_HOJA;
+                    var precioUnitario = tarifaFija + costoAnillos + costoPerforacion;
+                    var cantidadAnillado = cantidadTotal + 50;
+                    var totalAnillado = precioUnitario * cantidadAnillado;
+                    if (totalAnillado < MINIMUMS.anillado) totalAnillado = MINIMUMS.anillado;
+                    addGeneral(cantidadAnillado + " unidades — Anillado " + anilloData.label, totalAnillado);
+                }
+
+                if (tipo === "Tapa Dura" || nombre.includes("Emplaque") || nombre.includes("Pegado") || tipo === "Retractilado") {
+                    manuales.push(nombre + " [CONFIRMAR PRECIO]");
+                }
+            });
+
+            var txt = "";
+            txt += "OT " + ot + " | " + nombreProyecto + " | Cant. " + cantidadTotal + "\n";
+            if (descripcion && descripcion.trim() !== "") {
+                txt += "Descripción: " + descripcion.trim() + "\n";
+            }
+            txt += "=========================================================================\n\n";
+
+            piezasOutput.forEach(function(po) {
+                txt += "[" + po.nombre + "]\n";
+                po.lineas.forEach(function(l, i) {
+                    txt += (i+1) + ". " + l.texto + " \u2014 " + formatCLP(l.precio) + "\n";
+                });
+                txt += "Subtotal " + po.nombre + ": " + formatCLP(po.subtotal) + "\n\n";
+            });
+
+            if (generalesOutput.length > 0) {
+                txt += "[Servicios Generales / Alzado]\n";
+                generalesOutput.forEach(function(l, i) {
+                    txt += (i+1) + ". " + l.texto + " \u2014 " + formatCLP(l.precio) + "\n";
+                });
+                txt += "\n";
+            }
+
+            if (manuales.length > 0) {
+                txt += "[Servicios Manuales]\n";
+                manuales.forEach(function(m, i) {
+                    txt += (i+1) + ". " + m + "\n";
+                });
+                txt += "\n";
+            }
+
+            var iva = totalNeto * 0.19;
+            var bruto = totalNeto + iva;
+            txt += "MONTO NETO TOTAL:  " + formatCLP(totalNeto) + "\n";
+            txt += "IVA (19%):         " + formatCLP(iva) + "\n";
+            txt += "MONTO TOTAL BRUTO: " + formatCLP(bruto) + "\n";
+
+            document.getElementById('output').innerText = txt;
+            document.getElementById('results-container').classList.remove('hidden');
+        }
+
+        function pad(s, n) {
+            var str = String(s);
+            while (str.length < n) str += " ";
+            return str;
+        }
+        function repeat(ch, n) {
+            var s = "";
+            for (var i = 0; i < n; i++) s += ch;
+            return s;
+        }
+    </script>
+</body>
+</html>
