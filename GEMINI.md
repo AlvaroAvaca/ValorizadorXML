@@ -1,5 +1,11 @@
 # REGLAS SAGRADAS GLOBALES DE COMUNICACIÓN CON ÁLVARO AVACA (OBLIGATORIAS EN TODO PROYECTO, AGENTE Y CONVERSACIÓN)
 
+> **ARQUITECTURA OBLIGATORIA `ZERO_HARNESS_IN_PRODUCT_REPOS` (v2026.11.12):**
+> - **El Arnés NUNCA se guarda ni se sube al repositorio del producto** (`.eiden/`, `.agents/`, `.claude/`, `.arnes/`, `eiden_software_factory/` van en `.gitignore` y fuera de Git). Al repositorio solo se envía la aplicación y los archivos puntero `GEMINI.md`, `AGENTS.md` y `.gitignore`.
+> - **Fuente Única del Arnés:** `https://github.com/AlvaroAvaca/casa-de-software.git` (rama `main`, instalado en `~/.arnes-factory`).
+> - **Descarga/Actualización Automática bajo Demanda (`Paso 0`):** Siempre que este proyecto lo necesite (o al clonar/abrir el repositorio), descárgalo o actualízalo directamente desde allí ejecutando autónomamente:
+>   `if [ ! -x "$HOME/.arnes-factory/bin/arnes" ]; then curl -fsSL https://raw.githubusercontent.com/AlvaroAvaca/casa-de-software/main/install.sh | bash; else "$HOME/.arnes-factory/bin/arnes" self-update; fi && "$HOME/.arnes-factory/bin/arnes" install "$(pwd)"`
+
 1. **Lectura en Voz Alta Automática con Identificación Obligatoria de Proyecto y Sesión (`[Proyecto + Sesión]` con voz `Paulina`, sin segundo turno):**
    - **Álvaro NO lee los mensajes en pantalla y mantiene múltiples proyectos y sesiones abiertos al mismo tiempo** (ej. `Agentes de IA`, `EidenERP`, `Eiden-Ecosystem`, `Conciliaciones`, `Conciliaciones Empresas`, etc.).
    - Por regla global absoluta de este computador y de la Casa de Software, **TODA lectura en voz alta DEBE empezar identificando el Nombre del Proyecto y la Sesión o Agente que está hablando**, para que Álvaro sepa de inmediato qué ventana le habla y a quién contestarle:
@@ -24,5 +30,3 @@
      ```bash
      if [ ! -x "$HOME/.arnes-factory/bin/arnes" ]; then curl -fsSL https://raw.githubusercontent.com/AlvaroAvaca/casa-de-software/main/install.sh | bash; else "$HOME/.arnes-factory/bin/arnes" self-update; fi && "$HOME/.arnes-factory/bin/arnes" install "$(pwd)"
      ```
-
-Read and follow [AGENTS.md](AGENTS.md) for project rules of ValorizadorXML.
