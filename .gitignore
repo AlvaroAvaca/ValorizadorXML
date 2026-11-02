@@ -1,0 +1,17 @@
+node_modules/
+.DS_Store
+referencia*/
+reference*/
+# ZERO_HARNESS_IN_PRODUCT_REPOS: Harness lives exclusively in https://github.com/AlvaroAvaca/casa-de-software.git
+.eiden/
+.agents/
+.claude/
+.arnes/
+.harnesskit/
+.codex/
+.cursor/
+.mcp.json
+CLAUDE.md
+eiden_software_factory/
+Harness-software-house/
+HarnesOKIS/
